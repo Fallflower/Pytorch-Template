@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from loadDataset import trainDataset, testDataset
 from torch.utils.data import dataloader
 import os
-from transformer import VisionTransformer
+
 
 
 def get_config():

@@ -1,197 +1,161 @@
-from myModel import *
-from saveModelInfo import *
+import argparse
 import torch
-import os
 from torch import optim
-import torch.nn.functional as F
-from loadDataset import trainDataset, testDataset
-from torch.utils.data import dataloader
-import os
+import torch.nn as nn
+import torch.onnx
+from torchsummary import summary
+from torch.optim.lr_scheduler import ExponentialLR
+from sklearn.metrics import f1_score
+from loadData import get_dataloader
+from models.model_info import model_dic
+from models.WeightedFocalLoss import get_weights, WeightedFocalLoss
+from progressbar import ProgressBar, Percentage, Bar, Timer, ETA, FileTransferSpeed
 
 
+def train(opt: argparse.Namespace, saver):
 
-def get_config():
-    config_dict = {
-        "hidden_size": 128,
-        'patch_size': 14,
-        "mlp_dim": 1024,
-        'num_heads': 8,
-        'num_layers': 4,
-        'attention_dropout_rate': 0.5,
-        'dropout_rate': 0.1,
-        'classifier': 'token',
-        'representation_size': None
-    }
-    return config_dict
-
-
-def train(set_model, epochs, learning_rate, batchsize, optimizer=optim.Adam, device="cuda:0"):
-
-    trainDataLoader = dataloader.DataLoader(
-        dataset=trainDataset,
-        batch_size=batchsize,
-        shuffle=True
+    trainDataLoader, label_statistics = get_dataloader(
+        batch_size=opt.batch_size,
+        shuffle=True,
+        mode='train',
+        num_classes=opt.num_classes,
+        num_images=opt.num_images,
+        ds_enhance=opt.ds_enhance,
+        dl_num_worker=opt.tr_dl_num_worker
+    )
+    print(label_statistics)
+    testDataLoader = get_dataloader(
+        batch_size=opt.batch_size,
+        shuffle=False,
+        mode='test',
+        num_classes=opt.num_classes,
+        num_images=opt.num_images,
+        ds_enhance=False,
+        dl_num_worker=opt.te_dl_num_worker
     )
 
-    loss_func = F.nll_loss
-    model = set_model().to(device)
-    optimizer_Adam = optimizer(model.parameters(), lr=learning_rate)
+    class_weights = get_weights(label_statistics).to(opt.device)
+    criterion = WeightedFocalLoss(weights=class_weights, gamma=2.0, reduction='mean').to(opt.device)
+    # summary(criterion, [(14,), (14,)], device='cuda')
+    # torch.onnx.export(criterion, (torch.randn(1, 14).to(opt.device), torch.randn(1, 14).to(opt.device)), 'criterion.onnx')
 
-    mid = len(os.listdir('models')) + 1
-    mf_dic = {
-        'model_type': None,
-        'epoch': None,
-        'learning_rate': learning_rate,
-        'batch_size': batchsize,
-        'optim': 'Adam',
-        'loss': None,
-        'acc': None
-    }
-    if set_model == CNNModel:
-        mf_dic['model_type'] = 'CNNModel'
-    elif set_model == AttentionModel:
-        mf_dic['model_type'] = 'AttentionModel'
+    set_model = model_dic[opt.model]
+
+    loss_func = nn.BCEWithLogitsLoss()
+    model = set_model(opt).to(opt.device)
+    optimizer = optim.SGD(model.parameters(), lr=opt.learning_rate)
+
+    # Initialize the learning rate scheduler
+    scheduler = ExponentialLR(optimizer, gamma=opt.lr_gamma)  # Adjust gamma to your needs
 
     model.train()
-    for e in range(epochs):
+    for e in range(opt.epochs):
         total_loss = 0
         total_correct_num = 0
+        strict_correct_num = 0
         total_num = 0
+
+        all_preds = []
+        all_labels = []
+
+        widgets = [f'Epoch [{e + 1}/{opt.epochs}]: ', Percentage(), ' ', Bar('#'), ' ', Timer(),
+                   ' ', ETA(), ' ', FileTransferSpeed()]
+        pbar = ProgressBar(widgets=widgets, maxval=len(trainDataLoader)).start()
+
         for batch_id, (x, y) in enumerate(trainDataLoader):
-            y_pre = model(x.to(device))
+            y_pre = model(x.to(opt.device))
 
-            # compute accuracy and loss
+            # -- compute accuracy and loss --
+            ay_pre = (y_pre.float() > 0.1).cpu()
+            judge = (y == ay_pre)
 
-            correct_num = (y_pre.argmax(dim=1) == y.to(device)).sum()
-            total_correct_num += correct_num
-            # print(correct_num)
-            loss = loss_func(y_pre, y.to(device))
-            total_loss += loss.item() * batchsize
-            # print(loss.item())
+            total_correct_num += judge.sum().item()
+            # loss = loss_func(y_pre, y.to(opt.device))
+            loss = criterion(y_pre, y.to(opt.device))
+            total_loss += loss.item() * x.size(0)
 
-            total_num += batchsize
-            # backward and optimize
-            loss.backward()
-            optimizer_Adam.step()
-            optimizer_Adam.zero_grad()
+            # - strict acc -
+            for i in range(judge.shape[0]):
+                if judge[i].all():
+                    strict_correct_num += 1
 
-            # break
-        acc = total_correct_num / total_num
-        Loss = total_loss / total_num
-        print(
-            f"Epoch [{e + 1}/{epochs}] Loss: {Loss:.4f} Acc: {acc:.4f}")
-        mf_dic['epoch']=e;mf_dic['loss']=Loss;mf_dic['acc']=acc
-        save_model_info(mid, **mf_dic)
-
-    torch.save(model, 'models/%d.pt' % mid)
-    return mid
-
-
-def train_(epochs, learning_rate, batch_size, device="cuda:0"):
-
-    trainDataLoader = dataloader.DataLoader(
-        dataset=trainDataset,
-        batch_size=batch_size,
-        shuffle=True
-    )
-    config = get_config()
-    model = VisionTransformer(**config).to(device)
-    optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
-
-    mid = len(os.listdir('models')) + 1
-    mf_dic = {
-        'epoch': None,
-        'learning_rate': learning_rate,
-        'batch_size': batch_size,
-        'optim': 'Adam',
-        'loss': None,
-        'acc': None,
-        'model_type': 'AttentionModel'
-    }
-    loss_func = nn.CrossEntropyLoss()
-
-    model.train()
-    for e in range(epochs):
-        total_loss = 0.0
-        total_correct_num = 0
-        total_num = 0
-        for batch_id, (x, y) in enumerate(trainDataLoader):
-            y_pre = model(x.to(device))
-
-            preds = torch.argmax(y_pre, dim=1)
-
-            correct_num = (preds==y.to(device)).sum()
-
-            loss = loss_func(y_pre, y.to(device))
-            # print(loss.item())
             total_num += y.shape[0]
-            total_loss += loss.item()
-            total_correct_num += correct_num
-            # backward and optimize
+
+            # -- save predictions and labels --
+            all_preds.extend(ay_pre.numpy())
+            all_labels.extend(y.numpy())
+
+            # -- backward and optimize --
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            optimizer.zero_grad()
 
-        acc = total_correct_num / total_num
+            # -- finish an epoch --
+            pbar.update(batch_id + 1)
+
+        pbar.finish()
+        acc = total_correct_num / total_num / opt.num_classes
+        strict_acc = strict_correct_num / total_num
         Loss = total_loss / total_num
-        print(
-            f"Epoch [{e + 1}/{epochs}] Loss: {Loss:.6f} Acc: {acc:.4f}")
-        mf_dic['epoch']=e;mf_dic['loss']=Loss;mf_dic['acc']=acc
-        save_model_info(mid, **mf_dic)
 
-    torch.save(model, 'models/%d.pt' % mid)
-    return mid
+        f1 = f1_score(all_labels, all_preds, average='weighted')
 
+        # Logging
+        mf_dic = {'epoch': e + 1, 'loss': Loss, 'acc': acc, 'strict_acc': strict_acc, 'f1_score': f1, 'learning_rate': optimizer.param_groups[0]['lr']}
+        saver.save_model_info(**mf_dic)
 
-def test(model_id: int, device='cuda:0'):
-    batchsize = 1024
-    testDataLoader = dataloader.DataLoader(
-        dataset=testDataset,
-        batch_size=batchsize,
-        shuffle=False
-    )
+        # Step the scheduler
+        scheduler.step()
 
-    model = torch.load('models/%d.pt' % model_id)
-    model.to(device)
+        model.eval()
+        with torch.no_grad():
 
-    # set the model to evaluation mode
-    model.eval()
+            total_loss = 0
+            total_correct_num = 0
+            strict_correct_num = 0
+            total_num = 0
 
-    loss_func = nn.CrossEntropyLoss()
+            all_preds = []
+            all_labels = []
 
-    # disable gradient calculation
-    with torch.no_grad():
-        # iterate over the evaluation data loader
-        total_loss = 0
-        total_correct_num = 0
-        total_num = 0
-        for x, y in testDataLoader:
-            # forward pass
-            y_pre = model(x.to(device))
+            widgets = [f'Evaluating: ', Percentage(), ' ', Bar('#'), ' ', Timer(),
+                       ' ', ETA(), ' ', FileTransferSpeed()]
 
-            # compute the loss
-            loss = loss_func(y_pre, y.to(device))
+            pbar = ProgressBar(widgets=widgets, maxval=testDataLoader.__len__()).start()
+            for batch_id, (x, y) in enumerate(testDataLoader):
+                y_pre = model(x.to(opt.device))
 
-            # compute the accuracy
-            preds = torch.argmax(y_pre, dim=1)
-            correct_num = (preds == y.to(device)).sum()
+                # -- compute accuracy and loss --
+                ay_pre = (y_pre.float() > 0.1).cpu()
+                judge = (y == ay_pre)
 
-            # aggregate the metrics
-            total_loss += loss.item()
-            total_correct_num += correct_num
-            total_num += y.shape[0]
+                total_correct_num += judge.sum().item()
 
-        # compute the final evaluation metrics
-        loss = total_loss / total_num
-        acc = total_correct_num / total_num
+                loss = loss_func(y_pre, y.to(opt.device))
+                total_loss += loss.item() * opt.batch_size
 
-    tf_dic = {
-        'loss': loss,
-        'acc': acc
-    }
+                # - strict acc -
+                for i in range(judge.shape[0]):
+                    if judge[i].all():
+                        strict_correct_num += 1
 
-    # print or log the evaluation metrics
-    print(f"Validation loss: {loss:.6f}")
-    print(f"Validation accuracy: {acc:.4f}")
+                total_num += y.shape[0]
 
-    save_test_info(model_id, **tf_dic)
+                all_preds.extend(ay_pre.numpy())
+                all_labels.extend(y.numpy())
+
+                # -- finish an epoch --
+                pbar.update(batch_id)
+
+            pbar.finish()
+            acc = total_correct_num / total_num / opt.num_classes
+            strict_acc = strict_correct_num / total_num
+            Loss = total_loss / total_num
+
+            f1 = f1_score(all_labels, all_preds, average='weighted')
+
+            tf_dic = {'epoch': e + 1, 'loss': Loss, 'acc': acc, 'strict_acc': strict_acc, 'f1_score': f1}
+
+            saver.save_test_info(**tf_dic)
+
+    torch.save(model, saver.result_dir + 'model.pt')

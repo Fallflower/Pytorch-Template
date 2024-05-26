@@ -1,12 +1,18 @@
-from train import train, test, train_
-from saveModelInfo import init_save_files
-from myModel import CNNModel, AttentionModel
+from train import train
+from models.model_info import export_model
+from assistant import Options, HelpSave
+
+
+def main(model):
+    options = Options()
+    opt = options.load_options(f'./models/{model}/options.json')
+    saver = HelpSave()
+    saver.init_save_dir(opt)
+    train(opt, saver)
+
 
 if __name__ == '__main__':
-    init_save_files()
-    model_id = train(set_model=CNNModel,
-                     epochs=30,
-                     learning_rate=0.0009,
-                     batchsize=1024)
-    # model_id = train_(50, 0.008, 1024)
-    test(model_id)
+    # main("VGG19")
+    # main("DenseNet121")
+    # main("VisionTransformer")
+    export_model("DenseNet121")

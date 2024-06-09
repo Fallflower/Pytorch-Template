@@ -6,9 +6,6 @@ from progressbar import *
 from torchvision import transforms
 from torch.utils.data import dataset, dataloader
 
-widgets = ['Loading images: ', Percentage(), ' ', Bar('#'), ' ', Timer(),
-           ' ', ETA(), ' ', FileTransferSpeed()]
-
 
 class LoadDataset(dataset.Dataset):
     def __init__(self, label_file, num_images, data_dir='data/', transform=None):
@@ -21,14 +18,14 @@ class LoadDataset(dataset.Dataset):
         return self.length
 
 
-def get_test_trans(opt: argparse.Namespace):
+def get_test_trans():
     return transforms.Compose([
         transforms.ToTensor(),
 
     ])
 
 
-def get_train_trans(opt: argparse.Namespace):
+def get_train_trans():
     return transforms.Compose([
         transforms.ToTensor(),
 
@@ -37,16 +34,15 @@ def get_train_trans(opt: argparse.Namespace):
 
 def get_dataloader(mode, label_file, opt: argparse.Namespace):
     if mode == 'train':
-        dataset = LoadDataset(
-            label_file=label_file,
-            transform=get_train_trans()
-        )
         return dataloader.DataLoader(
-            dataset=dataset,
+            dataset=LoadDataset(
+                label_file=label_file,
+                transform=get_train_trans()
+            ),
             batch_size=opt.batch_size,
             shuffle=True,
             num_workers=opt.tr_dl_num_worker
-        )#, dataset.label_statistics
+        )
     elif mode == 'test':
         return dataloader.DataLoader(
             dataset=LoadDataset(

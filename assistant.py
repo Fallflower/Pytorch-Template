@@ -173,26 +173,33 @@ class HelpSave:
         if not os.path.exists(self.result_dir):
             os.makedirs(self.result_dir)
 
-        self.__init_save_files()
-
         options = Options()
         with open(self.result_dir + "optInfo.txt", 'w', encoding='utf-8') as f:
             f.write(options.print_options(opt))
 
-    def __init_save_files(self):
-        if not os.path.exists(self.result_dir + 'models_info.csv'):
-            with open(self.result_dir + 'models_info.csv', 'w', encoding='utf-8') as f:
-                f.write("epoch,learning_rate,loss,acc,strict_acc,f1_score\n")
+    def save_train_info(self, info_dict):
+        if not os.path.exists(self.result_dir + 'train_info.csv'):
+            with open(self.result_dir + 'train_info.csv', 'w', encoding='utf-8') as f:
+                f.write(",".join(info_dict.keys()) + "\n")
+        with open(self.result_dir + 'train_info.csv', 'a', encoding='utf-8') as mf:
+            str_list = []
+            for i in info_dict.values():
+                if type(i) is int:
+                    str_list.append("%d"%i)
+                else:
+                    str_list.append("%.6f"%i)
+            mf.write(",".join(str_list)+"\n")
 
-        if not os.path.exists(self.result_dir + 'results_info.csv'):
-            with open(self.result_dir + 'results_info.csv', 'w', encoding='utf-8') as f:
-                f.write('epoch,loss,acc,strict_acc,f1_score\n')
-
-    def save_model_info(self, epoch, learning_rate, loss, acc, strict_acc, f1_score):
-        with open(self.result_dir + 'models_info.csv', 'a', encoding='utf-8') as mf:
-            mf.write(
-                f"{epoch},{learning_rate:.6f},{loss:.6f},{acc:.6f},{strict_acc:.6f},{f1_score:.3f}\n")
-
-    def save_test_info(self, epoch, loss, acc, strict_acc, f1_score):
-        with open(self.result_dir + 'results_info.csv', 'a', encoding='utf-8') as tf:
-            tf.write(f"{epoch},{loss:.6f},{acc:.6f},{strict_acc:.6f},{f1_score:.3f}\n")
+    def save_test_info(self, info_dict):
+        if not os.path.exists(self.result_dir + 'test_info.csv'):
+            with open(self.result_dir + 'test_info.csv', 'w', encoding='utf-8') as f:
+                f.write(",".join(info_dict.keys()) + "\n")
+        with open(self.result_dir + 'test_info.csv', 'a', encoding='utf-8') as mf:
+            str_list = []
+            for i in info_dict.values():
+                if type(i) is int:
+                    str_list.append("%d" % i)
+                else:
+                    str_list.append("%.6f" % i)
+            mf.write(",".join(str_list) + "\n")
+            
